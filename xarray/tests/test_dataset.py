@@ -1780,9 +1780,6 @@ class TestDataset(TestCase):
         data1['A'] = 3 * data2['A']
         self.assertVariableEqual(data1['A'], 3 * data2['A'])
 
-        with self.assertRaises(NotImplementedError):
-            data1[{'x': 0}] = 0
-
     def test_setitem_pandas(self):
 
         ds = self.make_example_math_dataset()
@@ -1822,6 +1819,57 @@ class TestDataset(TestCase):
                             'bar': ('x', [np.nan, 2, 3])},
                            {'x': [0, 1, 2]})
         self.assertDatasetIdentical(ds, expected)
+
+    def test_setitem_with_list_like_key(self):
+        expected = create_test_data() + 3
+        actual = expected.copy()
+        expected['var1'] -= expected['var1'].mean(dim='dim2')
+        expected['var2'] -= expected['var2'].mean(dim='dim2')
+        self.assertDatasetAllClose(expected, actual)
+        actual[['var1', 'var2']] -= actual[['var1', 'var2']].mean(dim='dim2')
+
+    def test_setitem_with_dict_like_key_failing(self):
+        # Dict like key where the key's values are ints:
+        actual = create_test_data()
+        expected = actual.copy()
+        # 'var1' and 'var2' are labeled with ('dim1', 'dim2') and 'var3' is
+        # labeled with ('dim3', 'dim1')
+        expected['var1'].data[1, 0] = 0.
+        expected['var2'].data[1, 0] = 0.
+        expected['var3'].data[:, 1] = 0.
+        # The following line works because the value is a dataset
+        actual[dict(dim1=1, dim2=0)] -= actual[dict(dim1=1, dim2=0)]
+        self.assertDataArrayIdentical(expected, actual)
+
+        actual = create_test_data()
+        # This line fails with a poor error message. I don't know if we should
+        # accept this construct (is it even semantically correct and support a 
+        # valid use case?) but the error message should be made clearer IMO ...
+        actual[dict(dim1=1, dim2=0)] = 0
+        self.assertDataArrayIdentical(expected, actual)
+
+    def test_setitem_with_dict_like_key(self):
+        # Dict-like key and assigned value is a dataset:
+        actual = create_test_data()
+        expected = actual.copy()
+        # dim2 = 0 corresponds to first column in numpy array of 'var1' and
+        # 'var2'
+        expected['var1'].data[:, 0] += 1
+        expected['var2'].data[:, 0] += 1
+        expected['var3'].data += 1
+        actual[dict(dim2=0)] += 1
+        self.assertDataArrayIdentical(expected, actual)
+
+        # Dict like key and key's values are lists
+        actual = create_test_data()
+        expected = actual.copy()
+        # 'var1' and 'var2' are labeled with ('dim1', 'dim2') and 'var3' is
+        # labeled with ('dim3', 'dim1')
+        expected['var1'].data[[1, 3, 4], 0] -= 10.
+        expected['var2'].data[[1, 3, 4], 0] -= 10.
+        expected['var3'].data[:, [1, 3, 4]] -= 10.
+        actual[dict(dim1=[1, 3, 4], dim2=0)] -= 10.
+        self.assertDataArrayIdentical(expected, actual)
 
     def test_assign(self):
         ds = Dataset()

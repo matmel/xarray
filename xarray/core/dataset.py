@@ -711,10 +711,33 @@ class Dataset(Mapping, ImplementsDatasetReduce, BaseDataObject,
         variable.
         """
         if utils.is_dict_like(key):
-            raise NotImplementedError('cannot yet use a dictionary as a key '
-                                      'to set Dataset values')
 
-        self.update({key: value})
+            self_indexed = self.isel(**key)
+            variables, coord_names, dims = dataset_update_method(
+                self_indexed, value)
+            self_merged = self._replace_vars_and_dims(
+                variables, coord_names, dims, inplace=False)
+ 
+            indexers = self._validate_indexers(key)
+            for name, var in iteritems(self.data_vars):
+                var_indexers = dict((k, v) 
+                                    for k, v in indexers if k in var.dims)
+                if var_indexers:
+                    var[var_indexers] = self_merged[name]
+
+        elif hashable(key):
+            self.update({key: value})
+
+        else:
+            # key is a list-like:
+            key = np.asarray(key)
+            self_indexed = self._copy_listed(key)
+            variables, coord_names, dims = dataset_update_method(
+                self_indexed, value)
+            self_merged = self._replace_vars_and_dims(
+                variables, coord_names, dims, inplace=False)
+            for name in key:
+                self._variables[name].data = self_merged[name].data
 
     def __delitem__(self, key):
         """Remove a variable from this dataset.
@@ -1070,6 +1093,22 @@ class Dataset(Mapping, ImplementsDatasetReduce, BaseDataObject,
                                  for k, v in self.variables.items()])
         return self._replace_vars_and_dims(variables)
 
+    def _validate_indexers(self, indexers):
+        '''Utility method that validate indexers and return an OrderedDict-like
+        of indexers
+        '''
+        invalid = [k for k in indexers if k not in self.dims]
+        if invalid:
+            raise ValueError("dimensions %r do not exist" % invalid)
+
+        # all indexers should be int, slice or np.ndarrays
+        indexers = [(k, (np.asarray(v)
+                         if not isinstance(v, integer_types + (slice,))
+                         else v))
+                    for k, v in iteritems(indexers)]
+
+        return indexers
+
     def isel(self, drop=False, **indexers):
         """Returns a new dataset with each array indexed along the specified
         dimension(s).
@@ -1103,16 +1142,7 @@ class Dataset(Mapping, ImplementsDatasetReduce, BaseDataObject,
         Dataset.isel_points
         DataArray.isel
         """
-        invalid = [k for k in indexers if k not in self.dims]
-        if invalid:
-            raise ValueError("dimensions %r do not exist" % invalid)
-
-        # all indexers should be int, slice or np.ndarrays
-        indexers = [(k, (np.asarray(v)
-                         if not isinstance(v, integer_types + (slice,))
-                         else v))
-                    for k, v in iteritems(indexers)]
-
+        indexers = self._validate_indexers(indexers)
         variables = OrderedDict()
         for name, var in iteritems(self._variables):
             var_indexers = dict((k, v) for k, v in indexers if k in var.dims)
